@@ -1,0 +1,947 @@
+#load packages
+library(survminer);library(survival);library(synthpop)
+library(survival);library(dplyr)
+library(tidyr);library(flexsurv);library(gridExtra);library(ggplot2)
+source("plots.R")
+source("flessy2.R")
+source("pMSE.R")
+#load and pre-process dataset
+df <- rotterdam
+str(df)
+df$pid <- NULL
+df$year <- NULL
+df$meno   <- factor(df$meno)
+df$hormon <- factor(df$hormon)
+df$chemo  <- factor(df$chemo)
+df$recur  <- factor(df$recur)
+df$death  <- factor(df$death)
+df$grade <- factor(df$grade, ordered = TRUE)
+# ---------------------------------------------------------------------------
+#DESCRIPTIVE ANALYSIS of survival outcomes
+n_death <- sum(df$death == 1)
+n_cens_os <- sum(df$death == 0)
+n_recur <- sum(df$recur == 1)
+n_cens_dfs <- sum(df$recur == 0)
+n_total <- nrow(df)
+summary_table <- data.frame(Outcome = c("Overall Survival", 
+"Disease-Free Survival"), N = n_total,events = c(n_death, n_recur),
+censored = c(n_cens_os, n_cens_dfs),
+percentage = c(round(100*n_death/n_total,1), round(100*n_recur/n_total,1)))
+summary_table
+max(df$rtime)
+max(df$dtime)
+plot_df <- data.frame(Outcome = rep(c("Overall Survival (OS)",
+"Disease-Free Survival (DFS"), each = 2),
+Status = rep(c("Events", "Censored"), times = 2),Count = 
+c(n_death, n_cens_os, n_recur, n_cens_dfs))
+#plot
+ggplot(plot_df, aes(x = Outcome, y = Count, fill = Status)) +
+  geom_bar(stat = "identity", position = "dodge") +scale_fill_manual
+  (values = c("Events" = "#6BAED6", "Censored" = "#C6DBEF" ))+ 
+  labs(title = "Observed events and censoring for OS and DFS", 
+  y = "Number of patients",  x = "") +
+  theme_minimal() +theme(legend.title = element_blank(),
+  plot.title = element_text(hjust = 0.5))
+# ---------------------------------------------------------------------------
+#SURVIVAL ANALYSIS
+# os e dfs computation -----------------------------------------# ---------------------------------------------------------------------------
+# overall survival
+df_surv <- df
+df_surv$death <- as.numeric(as.character(df_surv$death))
+df_surv$recur <- as.numeric(as.character(df_surv$recur))
+#NON PARAMETRIC ESTIMATOR, KM 
+OS <- survfit(Surv(dtime, death) ~ 1,data = df_surv, conf.int=0.95)
+summary(OS)
+par(mfrow = c(1, 2))
+#plot OS KM estimator
+plot(OS,  xlab = "Time (days)",  ylab = "Survival function", 
+main = "Kaplan–Meier estimator", col = "#2171B5",lwd = 2)
+#plot cumulative hazard NA estimator
+plot(OS, fun= "cumhaz", xlab = "Time (days)",ylab = "Cumulative hazard",
+main = "Nelson–Aalen estimator", col = "#2171B5",lwd = 2)
+par(mfrow = c(1, 1))
+#PARAMETRIC estimators, flexsurvreg
+#OS and cum.haz. approximation with exponential distribution 
+mod_exp <- flexsurvreg(Surv(dtime, death)~ 1, dist = 'exp', data =df_surv )
+plot(mod_exp)
+plot(mod_exp, type="cumhaz")
+#OS and cum.haz. approximation with weibull distribution
+mod_wei <- flexsurvreg(Surv(dtime, death)~ 1, dist = 'weibull', data =df_surv)
+plot(mod_wei)
+plot(mod_wei, type="cumhaz")
+#OS and cum.haz. approximation with log-normal distribution 
+mod_lognorm <- flexsurvreg(Surv(dtime, death)~ 1, dist = 'lnorm', data =df_surv)
+plot(mod_lognorm)
+plot(mod_lognorm, type="cumhaz")
+#OS and cum.haz. approximation with log-logistic distribution
+mod_loglogis <- flexsurvreg(Surv(dtime, death)~ 1, dist = 'llogis', data =df_surv)
+plot(mod_loglogis)
+plot(mod_loglogis, type="cumhaz")
+# --------------------
+# plot parametric vs non parametric  
+par(mfrow = c(1, 1))
+plot(OS,conf.int = FALSE,col = "grey35",lwd = 2.5,xlab = "Time (days)", 
+ylab = "Survival probability",
+     main = "OS function - Parametric models vs Kaplan-Meier")
+lines(mod_exp, col = "forestgreen",   lwd = 1.5, ci = FALSE)
+lines(mod_wei, col = "darkmagenta",   lwd = 1.5, ci = FALSE)
+lines(mod_lognorm, col = "firebrick3", lwd = 1.5, ci = FALSE)
+lines(mod_loglogis, col = "darkslategray3", lwd = 1.5, ci = FALSE)
+legend("topright",legend = c("Kaplan-Meier","Exponential","Weibull", "Log-normal",
+"Log-logistic"),col = c("grey35",
+"forestgreen","darkmagenta","firebrick3","darkslategray3"),
+lwd = c(2.5, 1.5, 1.5, 1.5, 1.5),bty = "n",  cex = 0.9)
+plot(OS,fun = "cumhaz",conf.int = FALSE,col = "grey35",lwd = 2.5,
+xlab = "Time (days)",ylab = "Cumulative hazard",main = "Cumulative hazard
+function - Parametric models vs Nelson Aelen")
+lines(mod_exp,     type = "cumhaz", col = "forestgreen",   lwd = 1.5, ci = FALSE)
+lines(mod_wei,     type = "cumhaz", col = "darkmagenta",   lwd = 1.5, ci = FALSE)
+lines(mod_lognorm, type = "cumhaz", col = "firebrick3",    lwd = 1.5, ci = FALSE)
+lines(mod_loglogis,type = "cumhaz", col = "darkslategray3",lwd = 1.5, ci = FALSE)
+legend("topleft",legend = c("Kaplan-Meier","Exponential","Weibull",
+"Log-normal","Log-logistic"),
+       col = c("grey35","forestgreen","darkmagenta", "firebrick3",
+       "darkslategray3"),
+       lwd = c(2.5, 1.5, 1.5, 1.5, 1.5),bty = "n", cex = 0.9)
+# ---------------------------
+## OS by categorical covariates 
+OS_meno <- survfit(Surv(dtime, death) ~ meno, data = df_surv, conf.int = 0.95)
+summary(OS_meno)
+OS_chemo <- survfit(Surv(dtime, death) ~ chemo, data = df_surv, conf.int = 0.95)
+OS_size <- survfit(Surv(dtime, death) ~ size, data = df_surv, conf.int = 0.95)
+OS_hormon <- survfit(Surv(dtime, death) ~ hormon, data = df_surv, conf.int = 0.95)
+OS_grade <- survfit(Surv(dtime, death) ~ grade, data = df_surv, conf.int = 0.95)
+OS_recur <- survfit(Surv(dtime, death) ~ recur, data = df_surv, conf.int = 0.95)
+par(mfrow = c(3,2),mar = c(4,4,3,1),oma = c(0,0,2,0))
+plot(OS_meno,col = c("cadetblue2", "cadetblue4"),lwd = 2, xlab = "Time (days)",ylab = "Survival probability", main = "Overall survival by menopausal status", conf.int = FALSE)
+legend("bottomleft",legend = levels(df$meno),col = c("cadetblue2", "cadetblue4"),lty = 1, lwd = 2, bty = "n",
+       cex = 0.75, y.intersp = 0.8, x.intersp = 0.6, seg.len = 2)
+
+plot(OS_size,col = c("cadetblue2", "cadetblue4", "darkblue"),lwd = 2,xlab = "Time (days)",ylab = "Survival probability",main = "Overall survival by tumour size",conf.int = FALSE)
+legend("bottomleft",legend = levels(df$size),col = c("cadetblue2", "cadetblue4", "darkblue"),
+       lty = 1,lwd = 2,bty = "n",cex = 0.75, y.intersp = 0.8, x.intersp = 0.6, seg.len = 2)
+
+plot(OS_hormon,col = c("cadetblue2", "cadetblue4"),lwd = 2,xlab = "Time (days)",ylab = "Survival probability",
+     main = "Overall survival by hormonal therapy", conf.int = FALSE)
+legend("bottomleft",legend = levels(df$hormon),col = c("cadetblue2", "cadetblue4"),lty = 1,lwd = 2,bty = "n",
+       cex = 0.75, y.intersp = 0.8, x.intersp = 0.6, seg.len = 2)
+
+plot(OS_grade,col = c("cadetblue2", "cadetblue4"),lwd = 2,xlab = "Time (days)",
+     ylab = "Survival probability",main = "Overall survival by disease grade",conf.int = FALSE)
+legend("bottomleft", legend = levels(df$grade), col = c("cadetblue2", "cadetblue4"), lty = 1,
+       lwd = 2,bty = "n",cex = 0.75, y.intersp = 0.8, x.intersp = 0.6, seg.len = 2)
+
+plot(OS_recur,col = c("cadetblue2", "cadetblue4"),lwd = 2,xlab = "Time (days)",
+     ylab = "Survival probability",main = "Overall survival by disease recurrence",conf.int = FALSE)
+legend("bottomleft",legend = levels(df$recur),col = c("cadetblue2", "cadetblue4"),lty = 1,lwd = 2,bty = "n",
+       cex = 0.75, y.intersp = 0.8, x.intersp = 0.6, seg.len = 2)
+
+plot(OS_chemo,col = c("cadetblue2", "cadetblue4"),lwd = 2,xlab = "Time (days)",
+     ylab = "Survival probability",main = "Overall survival by chemotherapy",conf.int = FALSE)
+legend("bottomleft",legend = levels(df$chemo),col = c("cadetblue2", "cadetblue4"),
+       lty = 1,lwd = 2,bty = "n",cex = 0.75, y.intersp = 0.8, x.intersp = 0.6, seg.len = 2)
+
+#categorize continuous variable nodes and age
+df_surv$age_group <- cut(df_surv$age,breaks = quantile(df_surv$age,
+                                                       probs = c(0, 0.25, 0.5,0.75, 1)), include.lowest = TRUE)
+OS_age <- survfit(Surv(dtime, death_num) ~ age_group, data = df_surv)
+OS_age
+df_surv$nodes_group <- cut(df_surv$nodes, breaks = c(-Inf, 0, 3, 9, Inf), 
+                           labels = c("0", "1-3", "4-9", "10+"))
+OS_nodes <- survfit(Surv(dtime, death_num) ~ nodes_group, data = df_surv)
+
+#plot of os by continuous categorized variables 
+par(mfrow = c(1, 2))
+plot(OS_age,col = c("lightblue1", "cadetblue2", "dodgerblue2", "darkblue"),lwd = 2,xlab = "Time (days)",
+     ylab = "Survival probability",main = "Overall survival by age group",conf.int = FALSE)
+legend("bottomleft",legend = levels(df_surv$age_group),col = c("lightblue1", "cadetblue2", "dodgerblue2", "darkblue"),
+       lty = 1,lwd = 2,bty = "n",  cex = 0.75, y.intersp = 0.8, x.intersp = 0.6, seg.len = 2)
+plot(OS_nodes,col = c("lightblue1", "cadetblue2", "dodgerblue2", "darkblue"),lwd = 2,xlab = "Time (days)",
+     ylab = "Survival probability",main = "Overall survival by number of nodes",conf.int = FALSE)
+legend("bottomleft",legend = levels(df_surv$nodes_group),col = c("lightblue1", "cadetblue2", "dodgerblue2", "darkblue"),
+       lty = 1,lwd = 2,bty = "n", cex = 0.75, y.intersp = 0.8, x.intersp = 0.6, seg.len = 2)
+
+#log rank test
+logrank_meno <- survdiff(Surv(dtime, death) ~ meno, data = df_surv)
+logrank_hormon <- survdiff(Surv(dtime, death) ~ hormon, data = df_surv)
+logrank_chemo  <- survdiff(Surv(dtime, death) ~ chemo, data = df_surv)
+logrank_grade  <- survdiff(Surv(dtime, death) ~ grade, data = df_surv)
+logrank_recur <- survdiff(Surv(dtime, death) ~ grade, data = df_surv)
+logrank_size   <- survdiff(Surv(dtime, death) ~ size, data = df_surv)
+
+logrank_table <- data.frame(Covariate = c("meno", "hormon", "chemo","grade", "recur", "size"),
+df = c(length(logrank_meno$n) - 1,length(logrank_hormon$n) - 1,length(logrank_chemo$n) - 1,
+ length(logrank_grade$n) - 1,length(logrank_recur$n) - 1,length(logrank_size$n) - 1),
+pvalue = c(round(logrank_meno$pvalue, 4),round(logrank_hormon$pvalue, 4),
+ round(logrank_chemo$pvalue, 4), round(logrank_grade$pvalue, 4),round(logrank_recur$pvalue, 4), round(logrank_size$pvalue, 4)))
+
+logrank_table
+
+#Cox PH model  
+cox_os <- coxph(Surv(dtime, death) ~ age + meno + size + grade + nodes +
+                  hormon + chemo + er + pgr,data = df_surv)
+summary(cox_os)
+cox.zph(cox_os)
+#install.packages("mfp")  
+#library(mfp)  
+#cox_mfp <-mfp(Surv(dtime, death) ~ fp(age) +fp(er) + fp(pgr) + meno +size +nodes +
+#grade +hormon +chemo,data = df_surv,family = cox,alpha = 0.05)
+#summary(cox_mfp)
+#cox.zph(cox_mfp$fit)
+
+
+# ----------------------------------------------------------------------------------------------------------------
+#disease free survival 
+
+df_recur <- df
+df_recur$recur <- as.numeric(as.character(df_recur$recur))
+DFS <- survfit(Surv(rtime, recur) ~ 1,data = df_recur,conf.int = 0.95)
+summary(DFS)
+par(mfrow = c(1, 2))
+plot(DFS, xlab = "Time (days)",ylab = "Survival function",main = "Kaplan–Meier estimator",col = "orchid3", lwd = 2)
+plot(DFS,fun = "cumhaz",xlab = "Time (days)",ylab = "Cumulative hazard",main = "Nelson–Aalen estimator",
+     col = "orchid3",lwd = 2)
+par(mfrow = c(1, 1))
+
+#DFS by categories 
+DFS_meno   <- survfit(Surv(rtime, recur) ~ meno,   data = df_recur, conf.int = 0.95)
+DFS_chemo  <- survfit(Surv(rtime, recur) ~ chemo,  data = df_recur, conf.int = 0.95)
+DFS_size   <- survfit(Surv(rtime, recur) ~ size,   data = df_recur, conf.int = 0.95)
+DFS_hormon <- survfit(Surv(rtime, recur) ~ hormon, data = df_recur, conf.int = 0.95)
+DFS_grade  <- survfit(Surv(rtime, recur) ~ grade,  data = df_recur, conf.int = 0.95)
+
+par(mfrow = c(3,2), mar = c(4,4,3,1), oma = c(0,0,2,0))
+plot(DFS_meno,col = c("mistyrose", "purple"),lwd = 2,xlab = "Time (days)",ylab = "DFS probability",
+     main = "Disease-free survival by menopausal status",conf.int = FALSE)
+legend("bottomleft", legend = levels(df_recur$meno),col = c("mistyrose", "purple"), lty = 1, lwd = 2, bty = "n", cex = 0.75)
+
+plot(DFS_size,col = c("mistyrose", "pink1", "orchid2"),lwd = 2,xlab = "Time (days)",ylab = "DFS probability",
+     main = "Disease-free survival by tumour size",conf.int = FALSE)
+legend("topright", legend = levels(df_recur$size),col = c("mistyrose", "pink1", "orchid2"),
+       lty = 1, lwd = 2, bty = "n", cex = 0.75)
+
+plot(DFS_hormon,col = c("mistyrose", "purple"),lwd = 2,xlab = "Time (days)",ylab = "DFS probability",
+     main = "Disease-free survival by hormonal therapy",conf.int = FALSE)
+legend("bottomleft", legend = levels(df_recur$hormon),col = c("mistyrose", "purple"),
+       lty = 1, lwd = 2, bty = "n", cex = 0.75)
+
+plot(DFS_grade,col = c("mistyrose", "purple"),lwd = 2,xlab = "Time (days)",ylab = "DFS probability",main = "Disease-free survival by disease grade",
+     conf.int = FALSE)
+legend("bottomleft", legend = levels(df_recur$grade),col = c("mistyrose", "purple"),
+       lty = 1, lwd = 2, bty = "n", cex = 0.75)
+
+plot(DFS_chemo,col = c("mistyrose", "purple"),lwd = 2,xlab = "Time (days)",ylab = "DFS probability",
+     main = "Disease-free survival by chemotherapy",conf.int = FALSE)
+legend("bottomleft", legend = levels(df_recur$chemo),col = c("mistyrose", "purple"),
+       lty = 1, lwd = 2, bty = "n", cex = 0.75)
+
+#plot DFS by categorized continuous variables age and nodes 
+df_recur$age_group <- cut(df_recur$age, breaks = quantile(df_recur$age,probs = c(0, 0.25, 0.5, 0.75, 1)),
+                          include.lowest = TRUE)
+DFS_age <- survfit(Surv(rtime, recur) ~ age_group,data = df_recur)
+df_recur$nodes_group <- cut(df_recur$nodes, breaks = c(-Inf, 0, 3, 9, Inf), labels = c("0", "1-3", "4-9", "10+"))
+DFS_nodes <- survfit(Surv(rtime, recur) ~ nodes_group, data = df_recur)
+
+par(mfrow = c(1, 2))
+plot(DFS_age,col = c("mistyrose", "pink1", "orchid2", "purple"),lwd = 2,xlab = "Time (days)",
+     ylab = "DFS probability",main = "Disease-free survival by age group", conf.int = FALSE)
+legend("bottomleft",legend = levels(df_recur$age_group),col = c("mistyrose", "pink1", "orchid2", "purple"),
+       lty = 1, lwd = 2, bty = "n", cex = 0.75)
+plot(DFS_nodes,col = c("mistyrose", "pink1", "orchid2", "purple"),lwd = 2,xlab = "Time (days)",
+     ylab = "DFS probability",main = "Disease-free survival by number of nodes",conf.int = FALSE)
+legend("topright",legend = levels(df_recur$nodes_group),col = c("mistyrose", "pink1", "orchid2", "purple"),
+       lty = 1, lwd = 2, bty = "n", cex = 0.75)
+
+logrank_meno   <- survdiff(Surv(rtime, recur) ~ meno,   data = df_recur)
+logrank_hormon <- survdiff(Surv(rtime, recur) ~ hormon, data = df_recur)
+logrank_chemo  <- survdiff(Surv(rtime, recur) ~ chemo,  data = df_recur)
+logrank_grade  <- survdiff(Surv(rtime, recur) ~ grade,  data = df_recur)
+logrank_size   <- survdiff(Surv(rtime, recur) ~ size,   data = df_recur)
+logrank_nodes  <- survdiff(Surv(rtime, recur) ~ nodes_group, data = df_recur)
+logrank_age    <- survdiff(Surv(rtime, recur) ~ age_group,  data = df_recur)
+
+logrank_table <- data.frame(covariate = c("meno", "hormon", "chemo","grade", "size"),
+df = c(length(logrank_meno$n) - 1,length(logrank_hormon$n) - 1,length(logrank_chemo$n) - 1,
+length(logrank_grade$n) - 1,length(logrank_size$n) - 1),
+ pvalue = c(round(logrank_meno$pvalue, 4),round(logrank_hormon$pvalue, 4),round(logrank_chemo$pvalue, 4), round(logrank_grade$pvalue, 4)
+            ,round(logrank_size$pvalue, 4)))
+logrank_table
+
+cox_dfs <- coxph(Surv(rtime, recur) ~ age + meno + size + grade +nodes + hormon + chemo + er + pgr, data = df_recur)
+summary(cox_dfs)
+cox.zph(cox_dfs)
+
+#---------------------------------------------------------------------------
+#---------------------------------------------------------------------------
+#---------------------------------------------------------------------------
+#SYNTHETIC DATA GENERATION 
+#---------------------------------------------------------------------------
+#SYNTHPOP
+#---------------------------------------------------------------------------
+#with RFS and no OS
+df_dfs <- df
+df_dfs$grade <- factor(as.character(df_dfs$grade))
+sapply(df_dfs, class)
+df_dfs$dtime <- NULL      
+df_dfs$death <- NULL   
+str(df_dfs)
+syn_t0_dfs <- syn(df_dfs, m = 0, seed = 2025, print.flag = TRUE)
+method_dfs <- syn_t0_dfs$method 
+pm_dfs<-syn_t0_dfs$predictor.matrix
+vseq_dfs <- names(syn_t0_dfs$visit.sequence)
+#set method for survival variable dtime, death
+method_dfs["rtime"] <- "survctree"
+method_dfs["recur"] <- ""             
+syn_dfs_fit <- syn(data= df_dfs,m= 1, method= method_dfs,predictor.matrix = pm_dfs,visit.sequence= vseq_dfs,
+                   event= list(rtime = "recur"),seed= 2025,print.flag= TRUE)
+synthp_syn_dfs <- syn_dfs_fit$syn
+#compare(data=synthp_syn_dfs, object= df_dfs)
+df_dfs$data <- "Original"
+synthp_syn_dfs$data <- "Synthetic"
+combined <- bind_rows(df_dfs, synthp_syn_dfs)
+cont_vars <- c("age", "nodes", "pgr", "er", "rtime")
+cat_vars  <- c("meno", "size", "grade", "hormon", "chemo", "recur")
+plot_bar("size")
+plots_cat  <- lapply(cat_vars, plot_bar)
+plots_cont <- lapply(cont_vars, plot_histogram)
+all_plots <- c(plots_cont, plots_cat)
+do.call(grid.arrange, c(all_plots, ncol = 3,top = "Original vs Synthetic data, covariates + DFS, synthpop"))
+#pMSE
+all_vars  <- c(cont_vars, cat_vars)
+df_dfs$data <- 0 
+synthp_syn_dfs$data <- 1 
+combined <- bind_rows(df_dfs, synthp_syn_dfs)
+pmse_variable_results <- do.call(rbind,lapply(all_vars, compute_pMSE, data = combined))
+pmse_variable_results
+
+#---------------------------------------------------------------------------
+# with OS and no DFS 
+#---------------------------------------------------------------------------
+
+df_os <- df
+df_os$grade <- factor(as.character(df_os$grade))
+df_os$rtime <- NULL      
+df_os$recur <- NULL 
+syn_t0_os <- syn(df_os, m = 0, seed = 2025, print.flag = TRUE)
+method_os <- syn_t0_os$method 
+pm_os <- syn_t0_os$predictor.matrix
+vseq_os <- names(syn_t0_os$visit.sequence)
+method_os["dtime"] <- "survctree"
+method_os["death"] <- ""             
+syn_os_fit <- syn(data = df_os,m = 1,method = method_os,predictor.matrix = pm_os,
+                  visit.sequence = vseq_os,event = list(dtime = "death"),seed = 2025,print.flag = TRUE)
+synthp_syn_os <- syn_os_fit$syn
+#compare(data = synthp_syn_os, object = df_os)
+df_os$data <- "Original"
+synthp_syn_os$data <- "Synthetic"
+combined <- bind_rows(df_os, synthp_syn_os)
+combined
+cont_vars <- c("age", "nodes", "pgr", "er", "dtime")
+cat_vars  <- c("meno", "size", "grade", "hormon", "chemo", "death")
+plots_cat  <- lapply(cat_vars, plot_bar)
+plots_cont <- lapply(cont_vars, plot_histogram)
+all_plots <- c(plots_cont, plots_cat)
+do.call(grid.arrange,c(all_plots,ncol = 3,top = "Original vs Synthetic data, covariates + OS, synthpop"))
+#pMSE
+df_os$data <- 0 
+synthp_syn_os$data <- 1 
+combined <- bind_rows(df_os, synthp_syn_os)
+all_vars <- c(cont_vars, cat_vars)
+pmse_variable_results <- do.call(rbind,lapply(all_vars, compute_pMSE, data = combined))
+pmse_variable_results
+
+
+#---------------------------------------------------------------------------
+# with OS and DFS 
+#---------------------------------------------------------------------------
+
+df_full <- df
+df_full$grade <- factor(as.character(df_full$grade))
+syn_t0_full <- syn(df_full, m = 0, seed = 2025, print.flag = TRUE)
+method_full <- syn_t0_full$method
+
+method_full["rtime"] <- "survctree"
+method_full["recur"] <- ""
+method_full["dtime"] <- "survctree"
+method_full["death"] <- ""
+event = list(rtime = "recur",dtime = "death")
+pm_full     <- syn_t0_full$predictor.matrix
+vseq_full   <- names(syn_t0_full$visit.sequence)
+syn_full_fit <- syn(data = df_full,m = 1,method = method_full,predictor.matrix = pm_full,visit.sequence = vseq_full,
+                    event = event,seed = 2025,print.flag = TRUE)
+synthp_syn_full <- syn_full_fit$syn
+#compare(data = synthp_syn_full, object = df_full)
+df_full$data <- "Original"
+synthp_syn_full$data <- "Synthetic"
+
+combined <- bind_rows(df_full, synthp_syn_full)
+combined
+cont_vars_full <- c("age", "nodes", "pgr", "er", "rtime", "dtime")
+cat_vars_full  <- c("meno", "size", "grade", "hormon", "chemo", "recur", "death")
+
+plots_cat_full  <- lapply(cat_vars_full, plot_bar)
+plots_cont_full <- lapply(cont_vars_full, plot_histogram)
+all_plots_full <- c(plots_cont_full, plots_cat_full)
+do.call(grid.arrange,c(all_plots_full, ncol = 3,top = "Original vs Synthetic data, covariates + DFS, synthpop"))
+
+#pMSE 
+df_full$data <- 0
+synthp_syn_full$data <- 1
+
+combined <- bind_rows(df_full, synthp_syn_full)
+all_vars_full <- c(cont_vars_full, cat_vars_full)
+
+pmse_variable_results_full <- do.call(rbind,lapply(all_vars_full, compute_pMSE, data = combined))
+pmse_variable_results_full
+
+#dtime >= rtime?
+to_fix <- which(synthp_syn_full$dtime < synthp_syn_full$rtime)
+length(to_fix)/nrow(df_full)
+synthp_syn_full$rtime[to_fix] <- synthp_syn_full$dtime[to_fix]
+which(synthp_syn_full$dtime < synthp_syn_full$rtime)
+synthp_syn_full$recur[to_fix] <- 0
+#pMSE 
+df_full$data <- 0
+synthp_syn_full$data <- 1
+
+combined <- bind_rows(df_full, synthp_syn_full)
+all_vars_full <- c(cont_vars_full, cat_vars_full)
+pmse_variable_results_updated <- do.call(rbind,lapply(all_vars_full, compute_pMSE, data = combined))
+pmse_variable_results_updated
+pmse_variable_results_full
+
+#---------------------------------------------------------------------------
+#SYNTHPOP
+#---------------------------------------------------------------------------
+#with RFS and no OS
+
+df_dfs_flessy <- df
+df_dfs_flessy$grade <- factor(as.character(df_dfs_flessy$grade))
+df_dfs_flessy$dtime <- NULL      
+df_dfs_flessy$death <- NULL   
+names(df_dfs_flessy)[names(df_dfs_flessy) == "rtime"] <- "time"
+names(df_dfs_flessy)[names(df_dfs_flessy) == "recur"] <- "status"
+seq_dfs <- c("age", "meno", "size", "grade", "nodes", "pgr", "er","hormon", "chemo")
+method_dfs <- list(age= "sample",nodes="cart",chemo= "cart",hormon = "cart",pgr="cart",er= "cart",
+                   size = "cart", grade= "cart",meno= "cart", time="", status="")
+flessy_syn_dfs <- flessy2(
+  data    = df_dfs_flessy,
+  n       = nrow(df_dfs_flessy),
+  pred    = seq_dfs,
+  methods = method_dfs,
+  seq     = seq_dfs,
+  seed    = 2025
+)
+flessy_syn_dfs$i <- NULL
+str(flessy_syn_dfs)
+names(flessy_syn_dfs)[names(flessy_syn_dfs) == "status"] <- "recur"
+names(flessy_syn_dfs)[names(flessy_syn_dfs) == "time"] <- "rtime"
+names(df_dfs_flessy)[names(df_dfs_flessy) == "status"] <- "recur"
+names(df_dfs_flessy)[names(df_dfs_flessy) == "time"] <- "rtime"
+
+df_dfs_flessy$recur <- as.factor(df_dfs_flessy$recur)
+flessy_syn_dfs$recur <- as.factor(flessy_syn_dfs$recur)
+df_dfs_flessy$data <- "Original"
+flessy_syn_dfs$data<- "Synthetic"
+
+combined <- bind_rows(df_dfs_flessy, flessy_syn_dfs)
+
+cont_vars_dfs <- c("age", "nodes", "pgr", "er", "rtime")
+cat_vars_dfs <- c("meno", "size", "grade", "hormon", "chemo", "recur")
+plots_cat_dfs <- lapply(cat_vars_dfs, plot_bar)
+plots_cont_dfs <- lapply(cont_vars_dfs, plot_histogram)
+all_plots_dfs <- c(plots_cont_dfs, plots_cat_dfs)
+do.call(grid.arrange,c(all_plots_dfs,ncol = 3,top = "Original vs Synthetic data, covariates + DFS, fleSSy"))
+#pMSE
+df_dfs_flessy$data  <- 0
+flessy_syn_dfs$data <- 1
+combined_dfs <- bind_rows(df_dfs_flessy, flessy_syn_dfs)
+all_vars_dfs <- c(cont_vars_dfs, cat_vars_dfs)
+pmse_flessy_dfs <- do.call(rbind,lapply(all_vars_dfs,compute_pMSE,data = combined_dfs))
+pmse_flessy_dfs
+
+#---------------------------------------------------------------------------
+#with OS and no DFS
+#---------------------------------------------------------------------------
+
+df_os_flessy <- df
+df_os_flessy$grade <- factor(as.character(df_os_flessy$grade))
+df_os_flessy$rtime <- NULL
+df_os_flessy$recur <- NULL
+names(df_os_flessy)[names(df_os_flessy) == "dtime"] <- "time"
+names(df_os_flessy)[names(df_os_flessy) == "death"] <- "status"
+seq_os <- c("age", "meno", "size", "grade","nodes", "pgr", "er",
+            "hormon", "chemo")
+method_os <- list(age= "sample",nodes="cart",chemo= "cart",hormon = "cart",pgr="cart",er= "cart",
+                  size = "cart", grade= "cart",meno= "cart", time="", status="")
+flessy_syn_os <- flessy2(
+  data  = df_os_flessy,
+  n     = nrow(df_os_flessy),
+  pred  = seq_os,
+  methods = method_os,
+  seq   = seq_os,
+  seed  = 2025
+)
+flessy_syn_os$i <- NULL
+names(flessy_syn_os)[names(flessy_syn_os) == "status"] <- "death"
+names(flessy_syn_os)[names(flessy_syn_os) == "time"]  <- "dtime"
+names(df_os_flessy)[names(df_os_flessy) == "status"] <- "death"
+names(df_os_flessy)[names(df_os_flessy) == "time"]   <- "dtime"
+
+df_os_flessy$death<- as.factor(df_os_flessy$death)
+flessy_syn_os$death<- as.factor(flessy_syn_os$death)
+
+df_os_flessy$data <- "Original"
+flessy_syn_os$data<- "Synthetic"
+combined <- bind_rows(df_os_flessy, flessy_syn_os)
+
+cont_vars_os <- c("age", "nodes", "pgr", "er", "dtime")
+cat_vars_os  <- c("meno", "size", "grade", "hormon", "chemo", "death")
+plots_cat_os  <- lapply(cat_vars_os, plot_bar)
+plots_cont_os <- lapply(cont_vars_os, plot_histogram)
+all_plots_os <- c(plots_cont_os, plots_cat_os)
+do.call(grid.arrange, c(all_plots_os, ncol = 3, top = "Original vs Synthetic data, covariates + OS, fleSSy"))
+#pMSE
+df_os_flessy$data  <- 0
+flessy_syn_os$data <- 1
+combined_os <- bind_rows(df_os_flessy, flessy_syn_os)
+all_vars_os <- c(cont_vars_os, cat_vars_os)
+pmse_flessy_os <- do.call(rbind,lapply(all_vars_os, compute_pMSE,data = combined_os))
+pmse_flessy_os
+
+#---------------------------------------------------------------------------
+#with OS and DFS
+#---------------------------------------------------------------------------
+df_full <- df
+names(df_full)[names(df_full) == "dtime"] <- "time"
+names(df_full)[names(df_full) == "death"] <- "status"
+df_full$grade <- factor(as.character(df_full$grade))
+str(df_full)
+seq_full <- c("age", "meno", "size", "grade","nodes", "pgr", "er",
+              "hormon", "chemo", "rtime", "recur")
+pred_full <- c("age", "meno", "size", "grade","nodes", "pgr", "er",
+               "hormon", "chemo", "rtime", "recur")
+method_full <- list(age= "sample",nodes="cart",chemo= "cart",hormon = "cart",pgr="cart",er= "cart",
+                    size = "cart", grade= "cart",meno= "cart", rtime = "survctree",recur = "", time="", status="")
+event = list(rtime = "recur")
+flessy_syn_full <- flessy2(
+  data  = df_full,
+  n     = nrow(df_full),
+  pred  = pred_full,
+  methods = method_full,
+  knots = 4,
+  event= event,
+  seq   = seq_full,
+  seed  = 2025
+)
+flessy_syn_full$i <- NULL
+names(flessy_syn_full)[names(flessy_syn_full) == "status"] <- "death"
+names(flessy_syn_full)[names(flessy_syn_full) == "time"] <- "dtime"
+names(df_full)[names(df_full) == "status"] <- "death"
+names(df_full)[names(df_full) == "time"] <- "dtime"
+
+df_full$recur <- as.factor(df_full$recur)
+df_full$death<- as.factor(df_full$death)
+flessy_syn_full$recur<- as.factor(flessy_syn_full$recur)
+flessy_syn_full$death<- as.factor(flessy_syn_full$death)
+df_full$data <- "Original"
+flessy_syn_full$data <- "Synthetic"
+combined <- bind_rows(df_full, flessy_syn_full)
+cont_vars_full <- c("age", "nodes", "pgr", "er", "rtime", "dtime")
+cat_vars_full  <- c("meno", "size", "grade", "hormon", "chemo", "recur", "death")
+plots_cat_full  <- lapply(cat_vars_full, plot_bar)
+plots_cont_full <- lapply(cont_vars_full, plot_histogram)
+all_plots_full <- c(plots_cont_full, plots_cat_full)
+do.call(grid.arrange,c(all_plots_full,ncol = 3,top = "Original vs Synthetic data, full, fleSSy"))
+#pMSE
+df_full$data  <- 0
+flessy_syn_full$data <- 1
+combined_full <- bind_rows(df_full, flessy_syn_full)
+all_vars_full <- c(cont_vars_full, cat_vars_full)
+pmse_flessy_full <- do.call(rbind,lapply(all_vars_full, compute_pMSE,data = combined_full))
+pmse_flessy_full
+
+#fix rtime and dtime
+to_fix <- which(flessy_syn_full$dtime < flessy_syn_full$rtime)
+length(to_fix)/nrow(flessy_syn_full)
+flessy_syn_full$rtime[to_fix] <- flessy_syn_full$dtime[to_fix]
+flessy_syn_full$recur[to_fix] <- 0
+which(flessy_syn_full$dtime < flessy_syn_full$rtime)
+#pMSE
+df_full$data  <- 0
+flessy_syn_full$data <- 1
+combined <- bind_rows(df_full, flessy_syn_full)
+
+all_vars_full <- c(cont_vars_full, cat_vars_full)
+
+pmse_variable_results_full <- do.call( rbind,lapply(all_vars_full,compute_pMSE, data = combined))
+pmse_variable_results_full
+
+#upload survivalGAN datasets
+survGAN_syn_dfs <- read.csv("Scaricati/survivalGAN_synthetic_dfs (1).csv", stringsAsFactors = TRUE)
+survGAN_syn_os <- read.csv("Scaricati/survivalGAN_synthetic_os (1).csv", stringsAsFactors = TRUE)
+
+
+########################################################
+
+#COMPARISON OF OS SYNTHETIC DATASETS
+
+########################################################
+
+orig_os <- df
+orig_os$recur <- NULL
+orig_os$rtime <- NULL
+str(orig_os)
+orig_os$grade <- factor(as.character(orig_os$grade))
+
+survGAN_syn_os$death  <- as.factor(survGAN_syn_os$death)
+survGAN_syn_os$meno   <- as.factor(survGAN_syn_os$meno)
+survGAN_syn_os$hormon <- as.factor(survGAN_syn_os$hormon)
+survGAN_syn_os$chemo  <- as.factor(survGAN_syn_os$chemo)
+survGAN_syn_os$size   <- as.factor(survGAN_syn_os$size)
+survGAN_syn_os$grade  <- as.factor(survGAN_syn_os$grade)
+flessy_syn_os$death  <- as.factor(flessy_syn_os$death)
+survGAN_syn_os$death <- as.factor(survGAN_syn_os$death)
+flessy_syn_os$data  <- NULL
+synthp_syn_os$data <- NULL
+orig_os$dataset          <- "Original"
+synthp_syn_os$dataset    <- "synthpop"
+flessy_syn_os$dataset    <- "fleSSy"
+survGAN_syn_os$dataset   <- "survivalGAN"
+
+combined_os_gan <- bind_rows(orig_os,survGAN_syn_os)
+combined_os_gan$dataset <- factor(combined_os_gan$dataset,levels = c("Original", "survivalGAN"))
+
+plot_cont <- function(var){
+  ggplot(combined_os_gan,aes(x=.data[[var]], fill=dataset))+
+    geom_histogram(aes(y=after_stat(density)),alpha=0.8,position="identity",bins=30)+
+    theme_minimal()+labs(title=var,x="",y="Density")+ theme(plot.title=element_text(hjust=0.5))+scale_fill_manual(values=c("Original"="paleturquoise2",
+"survivalGAN"="orange2"))
+}
+plot_cat <- function(var){combined_os_gan %>%group_by(dataset,.data[[var]])%>%summarise(n=n(),.groups="drop")%>%group_by(dataset)%>%
+    mutate(prop=n/sum(n))%>% ggplot(aes(x=.data[[var]],y=prop,fill=dataset))+geom_col(position="dodge")+
+    theme_minimal()+ labs(title=var,x="",y="Proportion")+theme(plot.title=element_text(hjust=0.5))+scale_fill_manual(values=c(
+      "Original"="paleturquoise2", "survivalGAN"="orange2"))
+}
+cont_vars <- c("age", "nodes", "pgr", "er")
+cat_vars <- c("meno", "size", "grade", "hormon", "chemo")
+do.call(grid.arrange, c(lapply(cont_vars,plot_cont),ncol=2, top="Continuous covariates: Original vs survivalGAN"))
+do.call(grid.arrange, c(lapply(cat_vars,plot_cat),ncol=2,top="Categorical covariates: Original vs survivalGAN"))
+combined_os_all <- bind_rows(orig_os,  synthp_syn_os,flessy_syn_os,survGAN_syn_os)
+combined_os_all$dataset <- factor(combined_os_all$dataset,levels = c("Original","synthpop","fleSSy","survivalGAN"))
+ggplot(combined_os_all,aes(x = dtime, color = dataset)) +geom_density(size = 1) +
+  theme_minimal() +labs(title = "Distribution of dtime: Original vs synthpop vs fleSSy vs survivalGAN",
+       x = "dtime", y = "Density") + scale_color_manual(values = c("Original"    = "paleturquoise2",
+"synthpop"    = "plum2", "fleSSy"      = "seagreen3", "survivalGAN" = "orange2"))+theme(plot.title = element_text(hjust = 0.5))
+
+combined_os_all %>%group_by(dataset, death) %>%summarise(n = n(), .groups = "drop") %>%
+  group_by(dataset) %>%mutate(prop = n / sum(n)) %>% ggplot(aes(x = death, y = prop, fill = dataset)) +geom_col(position = "dodge") +
+  theme_minimal() +labs(title = "Distribution of death: Original vs synthpop vs fleSSy vs survivalGAN ",x = "death",
+  y = "Proportion") +theme(plot.title = element_text(hjust = 0.5)) +scale_fill_manual(values = c("Original" = "paleturquoise2",  "synthpop" = "plum2",
+"fleSSy"   = "seagreen3","survivalGAN"  = "orange2" ))
+#pMSE
+cont_vars <- c("age","nodes","pgr","er", "dtime")
+cat_vars  <- c("meno","size","grade","hormon","chemo", "death")
+all_vars <- c(cont_vars,cat_vars)
+orig_os$data <- 0
+synthp_syn_os$data <- 1
+pmse_synthpop <- do.call(rbind,lapply(all_vars, compute_pMSE,  data=bind_rows(orig_os,synthp_syn_os)))
+pmse_synthpop$method <- "synthpop"
+orig_os$data <- 0
+flessy_syn_os$data <- 1
+pmse_flessy <- do.call(rbind,lapply(all_vars, compute_pMSE, data=bind_rows(orig_os,flessy_syn_os)))
+pmse_flessy$method <- "fleSSy"
+orig_os$data <- 0
+survGAN_syn_os$data <- 1
+pmse_survGAN <- do.call(rbind, lapply(all_vars,compute_pMSE,data=bind_rows(orig_os,survGAN_syn_os)))
+pmse_survGAN$method <- "survGAN"
+pmse_comparison <- bind_rows(pmse_synthpop, pmse_flessy, pmse_survGAN)
+pmse_comparison
+#OS curve
+combined_os_all$death_num <- as.numeric(as.character(combined_os_all$death))
+fit_os <- survfit(Surv(dtime,death_num)~dataset,data=combined_os_all)
+par(mfrow=c(1,1))
+plot(fit_os,col=c("paleturquoise2","plum2","seagreen3","orange2"),lwd=2,
+     main="Overall Survival: Original vs synthpop vs fleSSy vs survivalGAN",xlab="Time (days)",
+     ylab="Survival probability")
+legend("bottomleft", legend=c("Original","synthpop","fleSSy","survivalGAN"), col=c("paleturquoise2","plum2","seagreen3","orange2"),
+       lwd=2,bty="n")
+#logrank test
+cat_vars <- c("meno","size","grade","hormon","chemo")
+get_logrank <- function(data, time, event, vars, dataset_name){
+  data[[event]] <- as.numeric(as.character(data[[event]]))
+  res <- lapply(vars, function(v){
+    fit <- survdiff(as.formula(paste0("Surv(",time,",",event,") ~ ",v)), data=data)
+    data.frame(Dataset = dataset_name,Variable = v, pvalue = round(fit$pvalue),4) })
+  do.call(rbind,res)
+}
+log_os_orig   <- get_logrank(orig_os,"dtime","death",cat_vars,"Original")
+log_os_syn    <- get_logrank(synthp_syn_os,"dtime","death",cat_vars,"synthpop")
+log_os_fle    <- get_logrank(flessy_syn_os,"dtime","death",cat_vars,"fleSSy")
+log_os_gan    <- get_logrank(survGAN_syn_os,"dtime","death",cat_vars,"survGAN")
+logrank_comparison <- bind_rows(log_os_orig,log_os_syn,log_os_fle, log_os_gan)
+logrank_comparison
+#PLOT OS BY CHEMO IN ORIGINAL, SYNTHETIC, SURVIVALGAN AND FLESSY 
+par(mfrow=c(2,2))
+fit_os_chemo_orig <- survfit(Surv(dtime, death_num) ~ chemo,  data = combined_os_all %>% filter(dataset == "Original"))
+plot(fit_os_chemo_orig,col = c("cadetblue2","cadetblue4"),lwd = 2,main = "OS by chemotherapy - Original",
+     xlab = "Time (days)",ylab = "Survival probability")
+legend("bottomleft",legend = levels(df$chemo),col = c("cadetblue2","cadetblue4"),lwd = 2,bty = "n")
+fit_os_chemo_syn <- survfit(Surv(dtime, death_num) ~ chemo, data = combined_os_all %>% filter(dataset == "synthpop"))
+plot(fit_os_chemo_syn,col = c("plum2","plum4"), lwd = 2,main = "OS by chemotherapy - synthpop",xlab = "Time (days)",
+     ylab = "Survival probability")
+legend("bottomleft",legend = levels(synthp_syn_full$chemo),col = c("plum2","plum4"),lwd = 2,bty = "n")
+fit_os_chemo_fle <- survfit(Surv(dtime, death_num) ~ chemo, data = combined_os_all %>%filter(dataset == "fleSSy"))
+plot(fit_os_chemo_fle,col = c("seagreen3","seagreen4"),lwd = 2, main = "OS by chemotherapy - fleSSy",xlab = "Time (days)",
+     ylab = "Survival probability")
+legend("bottomleft",legend = levels(flessy_syn_full$chemo),col = c("seagreen3","seagreen4"),  lwd = 2,
+       bty = "n")
+fit_os_chemo_gan <- survfit(Surv(dtime, death_num) ~ chemo,  data = combined_os_all %>% filter(dataset == "survivalGAN"))
+plot(fit_os_chemo_gan,col = c("orange2","orange4"),lwd = 2, main = "OS by chemotherapy - survivalGAN",
+     xlab = "Time (days)",ylab = "Survival probability")
+legend("bottomleft",legend = levels(survGAN_syn_os$chemo), col = c("orange2","orange4"), lwd = 2,
+       bty = "n")
+
+########################################################
+
+
+#COMPARISON OF DFS SYNTHETIC DATASETS
+
+########################################################
+
+orig_dfs <- df
+orig_dfs$dtime <- NULL
+orig_dfs$death <- NULL
+str(orig_dfs)
+orig_dfs$grade <- factor(as.character(orig_dfs$grade))
+
+survGAN_syn_dfs$recur  <- as.factor(survGAN_syn_dfs$recur)
+survGAN_syn_dfs$meno   <- as.factor(survGAN_syn_dfs$meno)
+survGAN_syn_dfs$hormon <- as.factor(survGAN_syn_dfs$hormon)
+survGAN_syn_dfs$chemo  <- as.factor(survGAN_syn_dfs$chemo)
+survGAN_syn_dfs$size   <- as.factor(survGAN_syn_dfs$size)
+survGAN_syn_dfs$grade  <- as.factor(survGAN_syn_dfs$grade)
+flessy_syn_dfs$recur <- as.factor(flessy_syn_dfs$recur)
+survGAN_syn_dfs$recur <- as.factor(survGAN_syn_dfs$recur)
+flessy_syn_dfs$data  <- NULL
+synthp_syn_dfs$data <- NULL 
+orig_dfs$dataset            <- "Original"
+synthp_syn_dfs$dataset      <- "synthpop"
+flessy_syn_dfs$dataset      <- "fleSSy"
+survGAN_syn_dfs$dataset     <- "survivalGAN"
+
+combined_dfs_gan <- bind_rows(orig_dfs, survGAN_syn_dfs)
+combined_dfs_gan$dataset <- factor(combined_dfs_gan$dataset,
+                                   levels = c("Original","survivalGAN"))
+plot_cont <- function(var){
+  ggplot(combined_dfs_gan,aes(x=.data[[var]], fill=dataset))+
+    geom_histogram(aes(y=after_stat(density)),alpha=0.8,position="identity",bins=30)+theme_minimal()+
+    labs(title=var,x="",y="Density")+theme(plot.title=element_text(hjust=0.5))+scale_fill_manual(values=c(
+      "Original"="paleturquoise2", "survivalGAN"="orange2"))
+}
+plot_cat <- function(var){combined_dfs_gan %>%
+    group_by(dataset,.data[[var]])%>%summarise(n=n(),.groups="drop")%>%group_by(dataset)%>%mutate(prop=n/sum(n))%>%
+    ggplot(aes(x=.data[[var]],y=prop,fill=dataset))+geom_col(position="dodge")+theme_minimal()+
+    labs(title=var,x="",y="Proportion")+theme(plot.title=element_text(hjust=0.5))+scale_fill_manual(values=c("Original"="paleturquoise2","survivalGAN"="orange2"))
+}
+cont_vars <- c("age", "nodes", "pgr", "er")
+cat_vars <- c("meno", "size", "grade", "hormon", "chemo")
+do.call(grid.arrange, c(lapply(cont_vars,plot_cont),ncol=2, top="Continuous covariates: Original vs survivalGAN"))
+do.call(grid.arrange, c(lapply(cat_vars,plot_cat),ncol=2,top="Categorical covariates: Original vs survivalGAN"))
+
+synthp_syn_dfs$dataset <- "synthpop/fleSSy"
+combined_dfs_fcs <- bind_rows(orig_dfs, synthp_syn_dfs)
+combined_dfs_fcs$dataset <- factor(combined_dfs_fcs$dataset, levels = c("Original","synthpop/fleSSy"))
+synthp_syn_dfs$dataset <- "synthpop"
+plot_cont <- function(var){
+  ggplot(combined_dfs_fcs,aes(x=.data[[var]], fill=dataset))+
+    geom_histogram(aes(y=after_stat(density)),alpha=0.8,position="identity",bins=30)+theme_minimal()+
+    labs(title=var,x="",y="Density")+theme(plot.title=element_text(hjust=0.5))+scale_fill_manual(values=c(
+      "Original"="paleturquoise2", "synthpop/fleSSy" = "chartreuse3"))
+}
+plot_cat <- function(var){
+  combined_dfs_fcs %>% group_by(dataset,.data[[var]])%>% summarise(n=n(),.groups="drop")%>%group_by(dataset)%>%
+    mutate(prop=n/sum(n))%>%ggplot(aes(x=.data[[var]],y=prop,fill=dataset))+ geom_col(position="dodge")+
+    theme_minimal()+labs(title=var,x="",y="Proportion")+theme(plot.title=element_text(hjust=0.5))+scale_fill_manual(values=c(
+      "Original"="paleturquoise2","synthpop/fleSSy" = "chartreuse3"))
+}
+do.call(grid.arrange, c(lapply(cont_vars,plot_cont),ncol=2, top="Continuous covariates: Original vs synthpop/fleSSy"))
+do.call(grid.arrange, c(lapply(cat_vars,plot_cat),ncol=2,top="Categorical covariates: Original vs synthpop/fleSSy"))
+combined_dfs_all <- bind_rows(orig_dfs,  synthp_syn_dfs,flessy_syn_dfs,survGAN_syn_dfs)
+combined_dfs_all$dataset <- factor(combined_os_all$dataset,levels = c("Original","synthpop","fleSSy","survivalGAN"))
+ggplot(combined_dfs_all, aes(x = rtime, color = dataset)) + geom_density(size = 1) +theme_minimal() +
+  labs(title = "Distribution of rtime: Original vs synthpop vs fleSSy vs survivalGAN",
+       x = "rtime",  y = "Density") +scale_color_manual(values = c( "Original"    = "paleturquoise2", "synthpop"    = "plum2", "fleSSy"      = "seagreen3", "survivalGAN" = "orange2" ))
+combined_dfs_all %>%group_by(dataset, recur) %>%summarise(n = n(), .groups = "drop") %>%
+  group_by(dataset) %>%mutate(prop = n / sum(n)) %>% ggplot(aes(x = recur, y = prop, fill = dataset)) +geom_col(position = "dodge") +
+  theme_minimal() +labs(title = "Distribution of recur: Original vs synthpop vs fleSSy vs survivalGAN ",x = "recur",
+  y = "Proportion") +theme(plot.title = element_text(hjust = 0.5)) +scale_fill_manual(values = c("Original" = "paleturquoise2",  "synthpop" = "plum2", "fleSSy"   = "seagreen3","survivalGAN"  = "orange2" ))
+#pMSE
+cont_vars <- c("age","nodes","pgr","er","rtime")
+cat_vars  <- c("meno","size","grade","hormon","chemo","recur")
+all_vars  <- c(cont_vars,cat_vars)
+orig_dfs$data <- 0
+synthp_syn_dfs$data <- 1
+pmse_synthpop <- do.call(rbind, lapply(all_vars,compute_pMSE, data=bind_rows(orig_dfs,synthp_syn_dfs)))
+pmse_synthpop$method <- "synthpop"
+orig_dfs$data <- 0
+flessy_syn_dfs$data <- 1
+pmse_flessy <- do.call(rbind,lapply(all_vars, compute_pMSE,   data=bind_rows(orig_dfs,flessy_syn_dfs)))
+pmse_flessy$method <- "fleSSy"
+orig_dfs$data <- 0
+survGAN_syn_dfs$data <- 1
+pmse_survGAN <- do.call(rbind,lapply(all_vars,compute_pMSE, data=bind_rows(orig_dfs,survGAN_syn_dfs)))
+pmse_survGAN$method <- "survivalGAN"
+pmse_comparison <- bind_rows(pmse_synthpop, pmse_flessy, pmse_survGAN)
+pmse_comparison
+par(mfrow=c(1,1))
+combined_dfs_all <- bind_rows(orig_dfs, synthp_syn_dfs, flessy_syn_dfs, survGAN_syn_dfs)
+combined_dfs_all$recur_num <- as.numeric(as.character(combined_dfs_all$recur))
+combined_dfs_all$dataset <- factor(combined_dfs_all$dataset,levels = c("Original","synthpop","fleSSy","survivalGAN"))
+levels(combined_dfs_all$dataset)
+fit_dfs <- survfit(Surv(rtime,recur_num)~dataset,data=combined_dfs_all)
+plot(fit_dfs,col=c("paleturquoise2","plum2","seagreen3","orange2"),
+     lwd=2,main="Disease-Free Survival: Original vs synthpop vs fleSSy vs survivalGAN",
+     xlab="Time (days)",ylab="Survival probability")
+legend("bottomleft",legend=c("Original","synthpop","fleSSy","survivalGAN"),
+       col=c("paleturquoise2","plum2","seagreen3","orange2"),lwd=2, bty="n")
+cat_vars <- c("meno","size","grade","hormon","chemo")
+get_logrank <- function(data, time, event, vars, dataset_name){
+  data[[event]] <- as.numeric(as.character(data[[event]]))
+  res <- lapply(vars, function(v){
+    fit <- survdiff(as.formula(paste0("Surv(",time,",",event,") ~ ",v)), data=data)
+    data.frame(Dataset = dataset_name,
+               Variable = v,
+               DF = length(fit$n)-1,
+               pvalue = round(fit$pvalue,4))
+  })
+  do.call(rbind,res)
+}
+
+log_dfs_orig   <- get_logrank(orig_dfs,"rtime","recur",cat_vars,"Original")
+log_dfs_syn    <- get_logrank(synthp_syn_dfs,"rtime","recur",cat_vars,"synthpop")
+log_dfs_fle    <- get_logrank(flessy_syn_dfs,"rtime","recur",cat_vars,"fleSSy")
+log_dfs_gan    <- get_logrank(survGAN_syn_dfs,"rtime","recur",cat_vars,"survGAN")
+logrank_comparison <- bind_rows(log_dfs_orig,log_dfs_syn, log_dfs_fle, log_dfs_gan)
+logrank_comparison
+
+par(mfrow=c(2,2))
+fit_dfs_meno_orig <- survfit(Surv(rtime, recur_num) ~ meno,data = combined_dfs_all %>% filter(dataset == "Original"))
+plot(fit_dfs_meno_orig,col = c("cadetblue2","cadetblue4"),lwd = 2, main = "DFS by menopausal status - Original",
+     xlab = "Time (days)",ylab = "Disease-Free Survival probability")
+legend("bottomleft", legend = levels(orig_dfs$meno), col = c("cadetblue2","cadetblue4"),
+       lwd = 2, bty = "n")
+fit_dfs_meno_syn <- survfit(Surv(rtime, recur_num) ~ meno,data = combined_dfs_all %>% filter(dataset == "synthpop"))
+plot(fit_dfs_meno_syn,col = c("plum2","plum4"),lwd = 2, main = "DFS by menopausal status - synthpop", xlab = "Time (days)",ylab = "Disease-Free Survival probability")
+legend("bottomleft",legend = levels(synthp_syn_dfs$meno), col = c("plum2","plum4"),lwd = 2,bty = "n")
+fit_dfs_meno_fle <- survfit(Surv(rtime, recur_num) ~ meno,data = combined_dfs_all %>% filter(dataset == "fleSSy"))
+plot(fit_dfs_meno_fle,col = c("seagreen3","seagreen4"),  lwd = 2,main = "DFS by menopausal status - fleSSy",xlab = "Time (days)",ylab = "Disease-Free Survival probability")
+legend("bottomleft",legend = levels(flessy_syn_dfs$meno),col = c("seagreen3","seagreen4"),
+       lwd = 2,bty = "n")
+fit_dfs_meno_gan <- survfit(Surv(rtime, recur_num) ~ meno,data = combined_dfs_all %>% filter(dataset == "survivalGAN"))
+plot(fit_dfs_meno_gan,col = c("orange2","orange4"),lwd = 2, main = "DFS by menopausal status - survivalGAN",
+     xlab = "Time (days)",ylab = "Disease-Free Survival probability")
+legend("bottomleft", legend = levels(survGAN_syn_dfs$meno),col = c("orange2","orange4"),
+       lwd = 2, bty = "n")
+#cox model 
+orig_dfs$recur_num <- as.numeric(as.character(orig_dfs$recur))
+synthp_syn_dfs$recur_num <- as.numeric(as.character(synthp_syn_dfs$recur))
+flessy_syn_dfs$recur_num  <- as.numeric(as.character(flessy_syn_dfs$recur))
+survGAN_syn_dfs$recur_num <- as.numeric(as.character(survGAN_syn_dfs$recur))
+cox_formula <- Surv(rtime, recur_num) ~ age + nodes + pgr + er + meno + size + grade + hormon + chemo
+cox_orig <- coxph(cox_formula, data = orig_dfs)
+cox_syn <- coxph(cox_formula, data = synthp_syn_dfs)
+cox_fle <- coxph(cox_formula, data = flessy_syn_dfs)
+cox_gan <- coxph(cox_formula, data = survGAN_syn_dfs)
+summary(cox_orig)
+summary(cox_syn)
+summary(cox_fle)
+summary(cox_gan)
+
+
+########################################################
+
+
+#COMPARISON OF DFS+OS SYNTHETIC DATASETS
+
+########################################################
+orig <-  df
+str(orig)
+orig$grade <- factor(as.character(orig$grade))
+orig$grade
+str(flessy_syn_full)
+flessy_syn_full$death<- as.factor(flessy_syn_full$death)
+str(synthp_syn_full)
+flessy_syn_full$recur <- as.factor(flessy_syn_full$recur)
+flessy_syn_full$data <- NULL
+synthp_syn_full$data <- NULL
+orig$dataset              <- "Original"
+synthp_syn_full$dataset <- "synthpop"
+flessy_syn_full$dataset <- "fleSSy"
+
+combined_all <- bind_rows(orig, synthp_syn_full, flessy_syn_full)
+combined_all$death_num <- as.numeric(as.character(combined_all$death))
+combined_all$recur_num <- as.numeric(as.character(combined_all$recur))
+
+
+cont_vars <- c("rtime","dtime")
+cat_vars  <- c("recur","death")
+plot_cont <- function(var){ggplot(combined_all, aes(x=.data[[var]], fill=dataset))+geom_histogram(aes(y=after_stat(density)),
+alpha=0.7, position="identity", bins=30)+theme_minimal()+labs(title=var,x="",y="Density")+
+    theme(plot.title=element_text(hjust=0.5))+ scale_fill_manual(values = c("Original" = "paleturquoise2", "synthpop" = "plum2","fleSSy"   = "seagreen3" )) 
+}
+plot_cat <- function(var){combined_all %>%group_by(dataset,.data[[var]])%>%summarise(n=n(),.groups="drop")%>% group_by(dataset)%>%mutate(prop=n/sum(n))%>% ggplot(aes(x=.data[[var]],y=prop,fill=dataset))+
+    geom_col(position="dodge")+theme_minimal()+labs(title=var,x="",y="Proportion")+theme(plot.title=element_text(hjust=0.5))+ scale_fill_manual(values = c(
+      "Original" = "paleturquoise2","synthpop" = "plum2", "fleSSy"= "seagreen3"))
+}
+do.call(grid.arrange,c(lapply(cont_vars,plot_cont),ncol=2,top="Time-to-event variables: Original vs synthpop vs fleSSy"))
+do.call(grid.arrange,c(lapply(cat_vars,plot_cat),ncol=2,top="Event variables: Original vs synthpop vs fleSSy"))
+#pMSE 
+all_vars <- c(cont_vars,cat_vars)
+orig$data <- 0
+synthp_syn_full$data <- 1
+pmse_synthpop <- do.call(rbind,lapply(all_vars,compute_pMSE,data=bind_rows(orig,synthp_syn_full)))
+pmse_synthpop$method <- "synthpop"
+orig$data <- 0
+flessy_syn_full$data <- 1
+pmse_flessy <- do.call(rbind,lapply(all_vars,compute_pMSE,data=bind_rows(orig,flessy_syn_full)))
+pmse_flessy$method <- "fleSSy"
+pmse_comparison <- bind_rows(pmse_synthpop,pmse_flessy)
+pmse_comparison
+levels(combined_all$dataset)
+combined_all$dataset <- factor(combined_all$dataset,levels = c("Original","synthpop","fleSSy"))
+levels(combined_all$dataset)
+
+fit_os <- survfit(Surv(dtime,death_num)~dataset,data=combined_all)
+fit_os
+par(mfrow=c(1,2))
+plot(fit_os,col=c("paleturquoise2","plum2","seagreen3"),lwd=2,main="Overall Survival: Original vs synthpop vs fleSSy",
+     xlab="Time (days)",ylab="Survival probability")
+legend("bottomleft", legend=c("Original","synthpop","fleSSy"), col=c("paleturquoise2","plum2","seagreen3"),lwd=2,bty="n")
+
+fit_rfs <- survfit(Surv(rtime,recur_num)~dataset,data=combined_all)
+plot(fit_rfs,col=c("paleturquoise2","plum2","seagreen3"),lwd=2, main="Recurrence-Free Survival: Original vs synthpop vs fleSSy",
+     xlab="Time (days)",ylab="Survival probability")
+legend("bottomleft", legend=c("Original","synthpop","fleSSy"),col=c("paleturquoise2","plum2","seagreen3"),lwd=2,bty="n")
+cat_vars <- c("meno","size","grade","hormon","chemo")
+#compute log-rank 
+get_logrank <- function(data, time, event, vars, dataset_name, outcome){
+  data[[event]] <- as.numeric(as.character(data[[event]]))
+  res <- lapply(vars, function(v){
+    fit <- survdiff(as.formula(paste0("Surv(",time,",",event,") ~ ",v)), data=data)
+    data.frame(Dataset = dataset_name, Outcome = outcome,Variable = v,
+               pvalue <- round(fit$pvalue,4)
+    )
+  })
+  do.call(rbind,res)
+}
+
+log_os_orig  <- get_logrank(df, "dtime","death", cat_vars, "Original","OS")
+log_dfs_orig <- get_logrank(df, "rtime","recur", cat_vars, "Original","DFS")
+log_os_syn   <- get_logrank(synthp_syn_full, "dtime","death", cat_vars,"synthpop","OS")
+log_dfs_syn  <- get_logrank(synthp_syn_full, "rtime","recur", cat_vars,"synthpop","DFS")
+log_os_fle   <- get_logrank(flessy_syn_full, "dtime","death", cat_vars,"fleSSy","OS")
+log_dfs_fle  <- get_logrank(flessy_syn_full, "rtime","recur", cat_vars,"fleSSy","DFS")
+
+logrank_comparison <- bind_rows( log_os_orig, log_dfs_orig,log_os_syn,  log_dfs_syn,log_os_fle,  log_dfs_fle)
+logrank_comparison
